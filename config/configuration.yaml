@@ -1,0 +1,19 @@
+# https://www.home-assistant.io/integrations/default_config/
+default_config:
+
+# https://www.home-assistant.io/integrations/logger/
+logger:
+  default: info
+  logs:
+    custom_components.samsungtv_advanced: debug
+
+http:
+  ip_ban_enabled: true
+  login_attempts_threshold: 5
+  trusted_proxies: "172.17.0.1"
+  use_x_forwarded_for: true
+
+# If you need to debug uncomment the line below (doc: https://www.home-assistant.io/integrations/debugpy/)
+debugpy:
+  start: true
+  wait: True

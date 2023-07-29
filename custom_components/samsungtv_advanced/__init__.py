@@ -175,8 +175,7 @@ async def _async_update_ssdp_locations(hass: HomeAssistant, entry: ConfigEntry) 
                 break
 
     if updates:
-        hass.config_entries.async_update_entry(
-            entry, data={**entry.data, **updates})
+        hass.config_entries.async_update_entry(entry, data={**entry.data, **updates})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -194,8 +193,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     @callback
     def _update_config_entry(updates: Mapping[str, Any]) -> None:
         """Update config entry with the new token."""
-        hass.config_entries.async_update_entry(
-            entry, data={**entry.data, **updates})
+        hass.config_entries.async_update_entry(entry, data={**entry.data, **updates})
 
     bridge.register_update_config_entry_callback(_update_config_entry)
 
@@ -215,11 +213,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # as not loaded and may reload it
     debounced_reloader = DebouncedEntryReloader(hass, entry)
     entry.async_on_unload(debounced_reloader.async_cancel)
-    entry.async_on_unload(entry.add_update_listener(
-        debounced_reloader.async_call))
+    entry.async_on_unload(entry.add_update_listener(debounced_reloader.async_call))
 
     hass.data[DOMAIN][entry.entry_id] = bridge
-    hass.config_entries.async_setup_platforms(entry, PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
 
@@ -249,8 +246,7 @@ async def _async_create_bridge_with_updated_data(
                     "Failed to determine connection method, make sure the device is on."
                 )
 
-        LOGGER.info("Updated port to %s and method to %s for %s",
-                    port, method, host)
+        LOGGER.info("Updated port to %s and method to %s for %s", port, method, host)
         updated_data[CONF_PORT] = port
         updated_data[CONF_METHOD] = method
 

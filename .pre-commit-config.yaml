@@ -1,0 +1,36 @@
+repos:
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.0.275
+    hooks:
+      - id: ruff
+        args:
+          - --fix
+  - hooks:
+      - id: black
+    repo: https://github.com/psf/black
+    rev: 23.3.0
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.2.5
+    hooks:
+      - id: codespell
+        args:
+          - --ignore-words-list=hass,alot,datas,dof,dur,farenheit,hist,iff,ines,ist,lightsensor,mut,nd,pres,referer,ser,serie,te,technik,ue,uint,visability,wan,wanna,withing
+          - --skip="./.*,*.csv,*.json"
+          - --quiet-level=2
+        exclude_types: [csv, json]
+  # - repo: https://github.com/adrienverge/yamllint.git
+  #   rev: v1.32.0
+  #   hooks:
+  #     - id: yamllint
+
+ci:
+  autofix_commit_msg: |
+    style: auto fixes from pre-commit.com hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ""
+  autoupdate_commit_msg: "build: pre-commit autoupdate"
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false
