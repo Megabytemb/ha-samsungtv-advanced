@@ -69,7 +69,7 @@ from .const import (
     UPNP_SVC_MAIN_TV_AGENT,
 )
 
-#SOURCES = {"TV": "KEY_TV", "HDMI": "KEY_HDMI"}
+# SOURCES = {"TV": "KEY_TV", "HDMI": "KEY_HDMI"}
 
 SUPPORT_SAMSUNGTV = (
     MediaPlayerEntityFeature.PAUSE
@@ -163,7 +163,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         self._attr_unique_id = config_entry.unique_id
         self._attr_is_volume_muted: bool = False
         self._attr_device_class = MediaPlayerDeviceClass.TV
-        #self._attr_source_list = list(SOURCES)
+        # self._attr_source_list = list(SOURCES)
         self._app_list: dict[str, str] | None = None
         self._app_list_event: asyncio.Event = asyncio.Event()
 
@@ -199,7 +199,7 @@ class SamsungTVDevice(MediaPlayerEntity):
 
     def _update_sources(self) -> None:
 
-        #self._attr_source_list = list(SOURCES)
+        # self._attr_source_list = list(SOURCES)
         if app_list := self._app_list:
             self._attr_source_list.extend(app_list)
 
@@ -283,6 +283,9 @@ class SamsungTVDevice(MediaPlayerEntity):
 
     async def _async_startup_source_list(self) -> None:
         service = await self._async_get_main_tv_agent()
+        if service is None:
+            return
+
         get_source_list = service.action('GetSourceList')
         result = await get_source_list.async_call()
         source_list = unescape(result.get('SourceList'))
@@ -306,9 +309,11 @@ class SamsungTVDevice(MediaPlayerEntity):
             s_id = int(source.find('ID').text)
             s_type = source.find('SourceType').text
             s_name = source.find('DeviceName').text
+            if s_name == "NONE":
+                s_name = None
             s_connected = True if source.find(
                 'Connected').text == 'Yes' else False
-            key = f'{s_name if s_name else s_type} [{s_id}]'
+            key = s_type
 
             self._source_list[key] = {
                 "id": s_id,
@@ -321,7 +326,8 @@ class SamsungTVDevice(MediaPlayerEntity):
                 if s_id == current_source['id'] and s_type == current_source['type']:
                     self._attr_media_title = key
                     self._attr_source = key
-                self._attr_source_list.append(key)
+
+            self._attr_source_list.append(key)
         LOGGER.debug("Sources: %s", self._attr_source_list)
 
     @callback
@@ -568,11 +574,9 @@ class SamsungTVDevice(MediaPlayerEntity):
             await self._async_launch_app(self._app_list[source])
             return
 
-        # if source in SOURCES:
-        #     await self._async_send_keys([SOURCES[source]])
-        #     return
         if source in self._source_list.keys():
             await self._async_upnp_select_source(source)
+            return
 
         LOGGER.error("Unsupported source")
 
