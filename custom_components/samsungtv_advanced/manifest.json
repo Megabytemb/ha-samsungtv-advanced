@@ -1,6 +1,9 @@
 {
 	"domain": "samsungtv_advanced",
 	"name": "Samsung Smart TV (Advanced)",
+	"after_dependencies": [
+		"aus_tv"
+	],
 	"version": "0.0.1",
 	"requirements": [
 		"getmac==0.8.2",

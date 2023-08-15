@@ -10,6 +10,7 @@ from xml.etree import ElementTree as ET
 from xml.sax.saxutils import unescape
 
 import defusedxml.ElementTree as DET
+from homeassistant.helpers import aiohttp_client
 
 from async_upnp_client.aiohttp import AiohttpNotifyServer, AiohttpSessionRequester
 from async_upnp_client.client import UpnpDevice, UpnpService, UpnpStateVariable
@@ -26,11 +27,14 @@ from async_upnp_client.profiles.dlna import DmrDevice
 from async_upnp_client.utils import async_get_local_ip
 import voluptuous as vol
 from wakeonlan import send_magic_packet
+from homeassistant.util.dt import utcnow
+
 
 from homeassistant.components.media_player import (
     MediaPlayerDeviceClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
+    MediaType
 )
 from homeassistant.components.media_player.const import (
     MEDIA_TYPE_APP,
@@ -69,6 +73,8 @@ from .const import (
     UPNP_SVC_MAIN_TV_AGENT,
 )
 
+from .channel import Channel
+
 # SOURCES = {"TV": "KEY_TV", "HDMI": "KEY_HDMI"}
 
 SUPPORT_SAMSUNGTV = (
@@ -92,6 +98,17 @@ SCAN_INTERVAL_PLUS_OFF_TIME = entity_component.DEFAULT_SCAN_INTERVAL + timedelta
 
 # Max delay waiting for app_list to return, as some TVs simply ignore the request
 APP_LIST_DELAY = 3
+
+
+def async_get_tv_guide_data(hass, channel_id: int):
+    """Retrieve the TV guide data for a specific channel ID from 'aus_tv'."""
+    aus_tv = hass.data.get("aus_tv")
+    if aus_tv is None:
+        return None
+
+    entry_id = next(iter(aus_tv))
+    coordinator = aus_tv[entry_id]
+    return coordinator.data.get(channel_id)
 
 
 async def async_setup_entry(
@@ -281,6 +298,53 @@ class SamsungTVDevice(MediaPlayerEntity):
             return
         return upnp_device.service(UPNP_SVC_MAIN_TV_AGENT)
 
+    async def _async_get_channel_info(self) -> None:
+        service = await self._async_get_main_tv_agent()
+        if service is None:
+            return
+
+        get_source_list = service.action('GetCurrentMainTVChannel')
+        result = await get_source_list.async_call()
+        current_channel = unescape(result.get('CurrentChannel'))
+
+        try:
+            xml = DET.fromstring(current_channel)
+        except ET.ParseError as err:
+            LOGGER.debug("Unable to parse XML: %s\nXML:\n%s",
+                         err, current_channel)
+
+        channel_dict = {
+            'ChType': xml.find('ChType').text,
+            'MajorCh': int(xml.find('MajorCh').text),
+            'MinorCh': int(xml.find('MinorCh').text),
+            'PTC': int(xml.find('PTC').text),
+            'ProgNum': int(xml.find('ProgNum').text)
+        }
+
+        return channel_dict
+
+    async def async_set_channel_info(self, clear=False):
+        """Update media attributes based on channel data or clear them."""
+        current_channel = await self._async_get_channel_info()
+        channel_data = async_get_tv_guide_data(
+            self.hass, current_channel["MajorCh"])
+        now_data = channel_data.get("now", {}) if channel_data else {}
+
+        if channel_data and not clear:
+            self._attr_media_channel = channel_data.get("name")
+            self._attr_media_title = now_data.get("title")
+            self._attr_media_duration = int(now_data.get("duration", 0)) * 60
+            self._attr_media_position = int(now_data.get("remaining", 0)) * 60
+            self._attr_media_content_type = MediaType.CHANNEL
+            self._attr_media_position_updated_at = utcnow()
+        else:
+            self._attr_media_channel = None
+            self._attr_media_title = None
+            self._attr_media_duration = None
+            self._attr_media_position = None
+            self._attr_media_content_type = None
+            self._attr_media_position_updated_at = None
+
     async def _async_startup_source_list(self) -> None:
         service = await self._async_get_main_tv_agent()
         if service is None:
@@ -322,12 +386,14 @@ class SamsungTVDevice(MediaPlayerEntity):
                 "connected": s_connected,
             }
 
-            if s_connected:
-                if s_id == current_source['id'] and s_type == current_source['type']:
-                    self._attr_media_title = key
-                    self._attr_source = key
-
             self._attr_source_list.append(key)
+
+        if current_source['type'] == "TV":
+            await self.async_set_channel_info()
+        else:
+            await self.async_set_channel_info(clear=True)
+            self._attr_source = current_source['type']
+
         LOGGER.debug("Sources: %s", self._attr_source_list)
 
     @callback
