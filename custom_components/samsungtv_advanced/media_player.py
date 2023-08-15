@@ -10,7 +10,8 @@ from xml.etree import ElementTree as ET
 from xml.sax.saxutils import unescape
 
 import defusedxml.ElementTree as DET
-from homeassistant.helpers import aiohttp_client
+from .triggers.turn_on import async_get_turn_on_trigger
+
 
 from async_upnp_client.aiohttp import AiohttpNotifyServer, AiohttpSessionRequester
 from async_upnp_client.client import UpnpDevice, UpnpService, UpnpStateVariable
@@ -59,6 +60,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.script import Script
 from homeassistant.util import dt as dt_util
+from homeassistant.helpers.trigger import PluggableAction
 
 from .bridge import SamsungTVBridge, SamsungTVWSBridge
 from .const import (
@@ -172,6 +174,8 @@ class SamsungTVDevice(MediaPlayerEntity):
             CONF_SSDP_MAIN_TV_AGENT_LOCATION
         )
         self._on_script = on_script
+        self._turn_on = PluggableAction(self.async_write_ha_state)
+
         # Assume that the TV is in Play mode
         self._playing: bool = True
 
@@ -185,7 +189,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         self._app_list_event: asyncio.Event = asyncio.Event()
 
         self._attr_supported_features = SUPPORT_SAMSUNGTV
-        if self._on_script or self._mac:
+        if self._on_script or self._mac or self._turn_on:
             # Add turn-on if on_script or mac is available
             self._attr_supported_features |= MediaPlayerEntityFeature.TURN_ON
         if self._ssdp_rendering_control_location:
@@ -244,6 +248,17 @@ class SamsungTVDevice(MediaPlayerEntity):
     async def async_will_remove_from_hass(self) -> None:
         """Handle removal."""
         await self._async_shutdown_dmr()
+
+    async def async_added_to_hass(self) -> None:
+        """Connect and subscribe to dispatcher signals and state updates."""
+        await super().async_added_to_hass()
+
+        if (entry := self.registry_entry) and entry.device_id:
+            self.async_on_remove(
+                self._turn_on.async_register(
+                    self.hass, async_get_turn_on_trigger(entry.device_id)
+                )
+            )
 
     async def async_update(self) -> None:
         """Update state of device."""
@@ -366,6 +381,7 @@ class SamsungTVDevice(MediaPlayerEntity):
 
         LOGGER.debug("Current Source: %s #%d",
                      current_source['type'], current_source['id'])
+        self._attr_source = current_source['type']
 
         self._attr_source_list = []
         self._source_list = {}
@@ -541,6 +557,7 @@ class SamsungTVDevice(MediaPlayerEntity):
             self._attr_state == STATE_ON
             or self._on_script is not None
             or self._mac is not None
+            or bool(self._turn_on)
             or self._power_off_in_progress()
         )
 
@@ -631,6 +648,8 @@ class SamsungTVDevice(MediaPlayerEntity):
         """Turn the media player on."""
         if self._on_script:
             await self._on_script.async_run(context=self._context)
+        elif self._turn_on:
+            await self._turn_on.async_run(self.hass, self._context)
         elif self._mac:
             await self.hass.async_add_executor_job(self._wake_on_lan)
 
