@@ -117,8 +117,7 @@ async def async_setup_entry(
     data = hass.data[DOMAIN]
     if turn_on_action := data.get(host, {}).get(CONF_ON_ACTION):
         on_script = Script(
-            hass, turn_on_action, entry.data.get(
-                CONF_NAME, DEFAULT_NAME), DOMAIN
+            hass, turn_on_action, entry.data.get(CONF_NAME, DEFAULT_NAME), DOMAIN
         )
 
     async_add_entities([SamsungTVDevice(bridge, entry, on_script)], True)
@@ -270,8 +269,7 @@ class SamsungTVDevice(MediaPlayerEntity):
                 STATE_ON if await self._bridge.async_is_on() else STATE_OFF
             )
         if self._attr_state != old_state:
-            LOGGER.debug("TV %s state updated to %s",
-                         self._host, self._attr_state)
+            LOGGER.debug("TV %s state updated to %s", self._host, self._attr_state)
 
         if self._attr_state != STATE_ON:
             if self._dmr_device and self._dmr_device.is_subscribed:
@@ -308,8 +306,7 @@ class SamsungTVDevice(MediaPlayerEntity):
                 self._ssdp_main_tv_agent_location
             )
         except (UpnpConnectionError, UpnpResponseError, UpnpXmlContentError) as err:
-            LOGGER.debug("Unable to create Upnp DMR device: %r",
-                         err, exc_info=True)
+            LOGGER.debug("Unable to create Upnp DMR device: %r", err, exc_info=True)
             return
         return upnp_device.service(UPNP_SVC_MAIN_TV_AGENT)
 
@@ -325,8 +322,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         try:
             xml = DET.fromstring(current_channel)
         except ET.ParseError as err:
-            LOGGER.debug("Unable to parse XML: %s\nXML:\n%s",
-                         err, current_channel)
+            LOGGER.debug("Unable to parse XML: %s\nXML:\n%s", err, current_channel)
 
         channel_dict = {
             "ChType": xml.find("ChType").text,
@@ -352,6 +348,8 @@ class SamsungTVDevice(MediaPlayerEntity):
         current_channel = await self._async_get_channel_info()
         tv_guide_data = async_get_tv_guide_data(self.hass)
 
+        LOGGER.debug("Channel Number: %s", current_channel["MajorCh"])
+
         channel_data = tv_guide_data.get(current_channel["MajorCh"])
         if channel_data is None:
             return self.async_clear_channel_info()
@@ -364,11 +362,15 @@ class SamsungTVDevice(MediaPlayerEntity):
         media_title = None
         media_channel = channel_data.get("name")
 
-        airings: list = channel_data.get("airings", [])
-        # reverse the list so we start with the latest shows
-        airings.reverse()
+        LOGGER.debug("Channel Title: %s", media_channel)
 
-        for airing in airings:
+        airings: list = channel_data.get("airings", [])
+
+        # reverse the list so we start with the latest shows
+        # This also makes a shallow copy
+        airings_reversed = airings[::-1]
+
+        for airing in airings_reversed:
             start_datetime = parse_datetime(airing["date"])
             if now > start_datetime:
                 current_show = airing
@@ -424,8 +426,7 @@ class SamsungTVDevice(MediaPlayerEntity):
             s_name = source.find("DeviceName").text
             if s_name == "NONE":
                 s_name = None
-            s_connected = True if source.find(
-                "Connected").text == "Yes" else False
+            s_connected = True if source.find("Connected").text == "Yes" else False
             key = s_type
 
             self._source_list[key] = {
@@ -480,8 +481,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         except asyncio.TimeoutError as err:
             # No need to try again
             self._app_list_event.set()
-            LOGGER.debug("Failed to load app list from %s: %r",
-                         self._host, err)
+            LOGGER.debug("Failed to load app list from %s: %r", self._host, err)
 
     async def _async_startup_dmr(self) -> None:
         assert self._ssdp_rendering_control_location is not None
@@ -498,8 +498,7 @@ class SamsungTVDevice(MediaPlayerEntity):
                     self._ssdp_rendering_control_location
                 )
             except (UpnpConnectionError, UpnpResponseError, UpnpXmlContentError) as err:
-                LOGGER.debug("Unable to create Upnp DMR device: %r",
-                             err, exc_info=True)
+                LOGGER.debug("Unable to create Upnp DMR device: %r", err, exc_info=True)
                 return
             _, event_ip = await async_get_local_ip(
                 self._ssdp_rendering_control_location, self.hass.loop
@@ -512,8 +511,7 @@ class SamsungTVDevice(MediaPlayerEntity):
                 loop=self.hass.loop,
             )
             await self._upnp_server.async_start_server()
-            self._dmr_device = DmrDevice(
-                upnp_device, self._upnp_server.event_handler)
+            self._dmr_device = DmrDevice(upnp_device, self._upnp_server.event_handler)
 
             try:
                 self._dmr_device.on_event = self._on_upnp_event
@@ -528,8 +526,7 @@ class SamsungTVDevice(MediaPlayerEntity):
                 self._dmr_device = None
                 await self._upnp_server.async_stop_server()
                 self._upnp_server = None
-                LOGGER.debug(
-                    "Error while subscribing during device connect: %r", err)
+                LOGGER.debug("Error while subscribing during device connect: %r", err)
                 raise
 
     async def _async_resubscribe_dmr(self) -> None:
@@ -537,8 +534,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         try:
             await self._dmr_device.async_subscribe_services(auto_resubscribe=True)
         except UpnpCommunicationError as err:
-            LOGGER.debug("Device rejected re-subscription: %r",
-                         err, exc_info=True)
+            LOGGER.debug("Device rejected re-subscription: %r", err, exc_info=True)
 
     async def _async_shutdown_dmr(self) -> None:
         """Handle removal."""
@@ -607,8 +603,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         try:
             await dmr_device.async_set_volume_level(volume)
         except UpnpActionResponseError as err:
-            LOGGER.warning(
-                "Unable to set volume level on %s: %r", self._host, err)
+            LOGGER.warning("Unable to set volume level on %s: %r", self._host, err)
 
     async def async_volume_up(self) -> None:
         """Volume up the media player."""
