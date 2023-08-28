@@ -5,13 +5,8 @@ import asyncio
 from collections.abc import Coroutine, Sequence
 from datetime import datetime, timedelta
 from typing import Any
-
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import unescape
-
-import defusedxml.ElementTree as DET
-from .triggers.turn_on import async_get_turn_on_trigger
-
 
 from async_upnp_client.aiohttp import AiohttpNotifyServer, AiohttpSessionRequester
 from async_upnp_client.client import UpnpDevice, UpnpService, UpnpStateVariable
@@ -26,16 +21,15 @@ from async_upnp_client.exceptions import (
 )
 from async_upnp_client.profiles.dlna import DmrDevice
 from async_upnp_client.utils import async_get_local_ip
+import defusedxml.ElementTree as DET
 import voluptuous as vol
 from wakeonlan import send_magic_packet
-from homeassistant.util.dt import utcnow
-
 
 from homeassistant.components.media_player import (
     MediaPlayerDeviceClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
-    MediaType
+    MediaType,
 )
 from homeassistant.components.media_player.const import (
     MEDIA_TYPE_APP,
@@ -49,7 +43,6 @@ from homeassistant.const import (
     CONF_NAME,
     STATE_OFF,
     STATE_ON,
-    STATE_PLAYING,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_component, entity_platform
@@ -59,8 +52,9 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.script import Script
-from homeassistant.util import dt as dt_util
 from homeassistant.helpers.trigger import PluggableAction
+from homeassistant.util import dt as dt_util
+from homeassistant.util.dt import parse_datetime, utcnow
 
 from .bridge import SamsungTVBridge, SamsungTVWSBridge
 from .const import (
@@ -74,8 +68,7 @@ from .const import (
     SERVICE_SET_DMR_PICTURE,
     UPNP_SVC_MAIN_TV_AGENT,
 )
-
-from .channel import Channel
+from .triggers.turn_on import async_get_turn_on_trigger
 
 # SOURCES = {"TV": "KEY_TV", "HDMI": "KEY_HDMI"}
 
@@ -102,15 +95,15 @@ SCAN_INTERVAL_PLUS_OFF_TIME = entity_component.DEFAULT_SCAN_INTERVAL + timedelta
 APP_LIST_DELAY = 3
 
 
-def async_get_tv_guide_data(hass, channel_id: int):
+def async_get_tv_guide_data(hass) -> dict:
     """Retrieve the TV guide data for a specific channel ID from 'aus_tv'."""
     aus_tv = hass.data.get("aus_tv")
     if aus_tv is None:
-        return None
+        return {}
 
     entry_id = next(iter(aus_tv))
     coordinator = aus_tv[entry_id]
-    return coordinator.data.get(channel_id)
+    return coordinator.data
 
 
 async def async_setup_entry(
@@ -124,30 +117,35 @@ async def async_setup_entry(
     data = hass.data[DOMAIN]
     if turn_on_action := data.get(host, {}).get(CONF_ON_ACTION):
         on_script = Script(
-            hass, turn_on_action, entry.data.get(
-                CONF_NAME, DEFAULT_NAME), DOMAIN
+            hass, turn_on_action, entry.data.get(CONF_NAME, DEFAULT_NAME), DOMAIN
         )
 
     async_add_entities([SamsungTVDevice(bridge, entry, on_script)], True)
 
     platform = entity_platform.async_get_current_platform()
-    platform.async_register_entity_service(SERVICE_SET_DMR_PICTURE, {
-        vol.Optional('brightness'): cv.positive_float,
-        vol.Optional('contrast'): cv.positive_float,
-        vol.Optional('sharpness'): cv.positive_float,
-        vol.Optional('color_temperature'): cv.positive_float,
-    }, _async_set_dmr_picture)
+    platform.async_register_entity_service(
+        SERVICE_SET_DMR_PICTURE,
+        {
+            vol.Optional("brightness"): cv.positive_float,
+            vol.Optional("contrast"): cv.positive_float,
+            vol.Optional("sharpness"): cv.positive_float,
+            vol.Optional("color_temperature"): cv.positive_float,
+        },
+        _async_set_dmr_picture,
+    )
 
 
 async def _async_set_dmr_picture(entity: SamsungTVDevice, service_call):
-    if 'brightness' in service_call.data:
-        await entity.async_set_brightness_level(service_call.data['brightness'])
-    if 'contrast' in service_call.data:
-        await entity.async_set_contrast_level(service_call.data['contrast'])
-    if 'sharpness' in service_call.data:
-        await entity.async_set_sharpness_level(service_call.data['sharpness'])
-    if 'color_temperature' in service_call.data:
-        await entity.async_set_color_temperature_level(service_call.data['color_temperature'])
+    if "brightness" in service_call.data:
+        await entity.async_set_brightness_level(service_call.data["brightness"])
+    if "contrast" in service_call.data:
+        await entity.async_set_contrast_level(service_call.data["contrast"])
+    if "sharpness" in service_call.data:
+        await entity.async_set_sharpness_level(service_call.data["sharpness"])
+    if "color_temperature" in service_call.data:
+        await entity.async_set_color_temperature_level(
+            service_call.data["color_temperature"]
+        )
 
 
 class SamsungTVDevice(MediaPlayerEntity):
@@ -219,7 +217,6 @@ class SamsungTVDevice(MediaPlayerEntity):
         self._upnp_server: AiohttpNotifyServer | None = None
 
     def _update_sources(self) -> None:
-
         # self._attr_source_list = list(SOURCES)
         if app_list := self._app_list:
             self._attr_source_list.extend(app_list)
@@ -272,8 +269,7 @@ class SamsungTVDevice(MediaPlayerEntity):
                 STATE_ON if await self._bridge.async_is_on() else STATE_OFF
             )
         if self._attr_state != old_state:
-            LOGGER.debug("TV %s state updated to %s",
-                         self._host, self._attr_state)
+            LOGGER.debug("TV %s state updated to %s", self._host, self._attr_state)
 
         if self._attr_state != STATE_ON:
             if self._dmr_device and self._dmr_device.is_subscribed:
@@ -306,10 +302,11 @@ class SamsungTVDevice(MediaPlayerEntity):
         upnp_factory = UpnpFactory(upnp_requester, non_strict=True)
         upnp_device: UpnpDevice | None = None
         try:
-            upnp_device = await upnp_factory.async_create_device(self._ssdp_main_tv_agent_location)
+            upnp_device = await upnp_factory.async_create_device(
+                self._ssdp_main_tv_agent_location
+            )
         except (UpnpConnectionError, UpnpResponseError, UpnpXmlContentError) as err:
-            LOGGER.debug("Unable to create Upnp DMR device: %r",
-                         err, exc_info=True)
+            LOGGER.debug("Unable to create Upnp DMR device: %r", err, exc_info=True)
             return
         return upnp_device.service(UPNP_SVC_MAIN_TV_AGENT)
 
@@ -318,22 +315,21 @@ class SamsungTVDevice(MediaPlayerEntity):
         if service is None:
             return
 
-        get_source_list = service.action('GetCurrentMainTVChannel')
+        get_source_list = service.action("GetCurrentMainTVChannel")
         result = await get_source_list.async_call()
-        current_channel = unescape(result.get('CurrentChannel'))
+        current_channel = unescape(result.get("CurrentChannel"))
 
         try:
             xml = DET.fromstring(current_channel)
         except ET.ParseError as err:
-            LOGGER.debug("Unable to parse XML: %s\nXML:\n%s",
-                         err, current_channel)
+            LOGGER.debug("Unable to parse XML: %s\nXML:\n%s", err, current_channel)
 
         channel_dict = {
-            'ChType': xml.find('ChType').text,
-            'MajorCh': int(xml.find('MajorCh').text),
-            'MinorCh': int(xml.find('MinorCh').text),
-            'PTC': int(xml.find('PTC').text),
-            'ProgNum': int(xml.find('ProgNum').text)
+            "ChType": xml.find("ChType").text,
+            "MajorCh": int(xml.find("MajorCh").text),
+            "MinorCh": int(xml.find("MinorCh").text),
+            "PTC": int(xml.find("PTC").text),
+            "ProgNum": int(xml.find("ProgNum").text),
         }
 
         return channel_dict
@@ -341,17 +337,23 @@ class SamsungTVDevice(MediaPlayerEntity):
     async def async_set_channel_info(self, clear=False):
         """Update media attributes based on channel data or clear them."""
         current_channel = await self._async_get_channel_info()
-        channel_data = async_get_tv_guide_data(
-            self.hass, current_channel["MajorCh"])
+        tv_guide_data = async_get_tv_guide_data(self.hass)
+
+        channel_data = tv_guide_data.get(current_channel["MajorCh"])
         now_data = channel_data.get("now", {}) if channel_data else {}
 
         if channel_data and not clear:
+            now = utcnow()
+            start_datetime = parse_datetime(now_data["date"])
+            media_duration = int(now_data["duration"]) * 60
+            media_position = (now - start_datetime).seconds
+
             self._attr_media_channel = channel_data.get("name")
             self._attr_media_title = now_data.get("title")
-            self._attr_media_duration = int(now_data.get("duration", 0)) * 60
-            self._attr_media_position = int(now_data.get("remaining", 0)) * 60
+            self._attr_media_duration = media_duration
+            self._attr_media_position = media_position
             self._attr_media_content_type = MediaType.CHANNEL
-            self._attr_media_position_updated_at = utcnow()
+            self._attr_media_position_updated_at = now
         else:
             self._attr_media_channel = None
             self._attr_media_title = None
@@ -365,9 +367,9 @@ class SamsungTVDevice(MediaPlayerEntity):
         if service is None:
             return
 
-        get_source_list = service.action('GetSourceList')
+        get_source_list = service.action("GetSourceList")
         result = await get_source_list.async_call()
-        source_list = unescape(result.get('SourceList'))
+        source_list = unescape(result.get("SourceList"))
 
         try:
             xml = DET.fromstring(source_list)
@@ -375,24 +377,24 @@ class SamsungTVDevice(MediaPlayerEntity):
             LOGGER.debug("Unable to parse XML: %s\nXML:\n%s", err, source_list)
 
         current_source = {
-            "id": int(xml.find('.//ID').text),
-            "type": xml.find('.//CurrentSourceType').text,
+            "id": int(xml.find(".//ID").text),
+            "type": xml.find(".//CurrentSourceType").text,
         }
 
-        LOGGER.debug("Current Source: %s #%d",
-                     current_source['type'], current_source['id'])
-        self._attr_source = current_source['type']
+        LOGGER.debug(
+            "Current Source: %s #%d", current_source["type"], current_source["id"]
+        )
+        self._attr_source = current_source["type"]
 
         self._attr_source_list = []
         self._source_list = {}
-        for source in xml.findall('.//Source'):
-            s_id = int(source.find('ID').text)
-            s_type = source.find('SourceType').text
-            s_name = source.find('DeviceName').text
+        for source in xml.findall(".//Source"):
+            s_id = int(source.find("ID").text)
+            s_type = source.find("SourceType").text
+            s_name = source.find("DeviceName").text
             if s_name == "NONE":
                 s_name = None
-            s_connected = True if source.find(
-                'Connected').text == 'Yes' else False
+            s_connected = True if source.find("Connected").text == "Yes" else False
             key = s_type
 
             self._source_list[key] = {
@@ -404,11 +406,11 @@ class SamsungTVDevice(MediaPlayerEntity):
 
             self._attr_source_list.append(key)
 
-        if current_source['type'] == "TV":
+        if current_source["type"] == "TV":
             await self.async_set_channel_info()
         else:
             await self.async_set_channel_info(clear=True)
-            self._attr_source = current_source['type']
+            self._attr_source = current_source["type"]
 
         LOGGER.debug("Sources: %s", self._attr_source_list)
 
@@ -447,8 +449,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         except asyncio.TimeoutError as err:
             # No need to try again
             self._app_list_event.set()
-            LOGGER.debug("Failed to load app list from %s: %r",
-                         self._host, err)
+            LOGGER.debug("Failed to load app list from %s: %r", self._host, err)
 
     async def _async_startup_dmr(self) -> None:
         assert self._ssdp_rendering_control_location is not None
@@ -465,8 +466,7 @@ class SamsungTVDevice(MediaPlayerEntity):
                     self._ssdp_rendering_control_location
                 )
             except (UpnpConnectionError, UpnpResponseError, UpnpXmlContentError) as err:
-                LOGGER.debug("Unable to create Upnp DMR device: %r",
-                             err, exc_info=True)
+                LOGGER.debug("Unable to create Upnp DMR device: %r", err, exc_info=True)
                 return
             _, event_ip = await async_get_local_ip(
                 self._ssdp_rendering_control_location, self.hass.loop
@@ -479,8 +479,7 @@ class SamsungTVDevice(MediaPlayerEntity):
                 loop=self.hass.loop,
             )
             await self._upnp_server.async_start_server()
-            self._dmr_device = DmrDevice(
-                upnp_device, self._upnp_server.event_handler)
+            self._dmr_device = DmrDevice(upnp_device, self._upnp_server.event_handler)
 
             try:
                 self._dmr_device.on_event = self._on_upnp_event
@@ -495,8 +494,7 @@ class SamsungTVDevice(MediaPlayerEntity):
                 self._dmr_device = None
                 await self._upnp_server.async_stop_server()
                 self._upnp_server = None
-                LOGGER.debug(
-                    "Error while subscribing during device connect: %r", err)
+                LOGGER.debug("Error while subscribing during device connect: %r", err)
                 raise
 
     async def _async_resubscribe_dmr(self) -> None:
@@ -504,8 +502,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         try:
             await self._dmr_device.async_subscribe_services(auto_resubscribe=True)
         except UpnpCommunicationError as err:
-            LOGGER.debug("Device rejected re-subscription: %r",
-                         err, exc_info=True)
+            LOGGER.debug("Device rejected re-subscription: %r", err, exc_info=True)
 
     async def _async_shutdown_dmr(self) -> None:
         """Handle removal."""
@@ -574,8 +571,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         try:
             await dmr_device.async_set_volume_level(volume)
         except UpnpActionResponseError as err:
-            LOGGER.warning(
-                "Unable to set volume level on %s: %r", self._host, err)
+            LOGGER.warning("Unable to set volume level on %s: %r", self._host, err)
 
     async def async_volume_up(self) -> None:
         """Volume up the media player."""
@@ -659,7 +655,7 @@ class SamsungTVDevice(MediaPlayerEntity):
             await self._async_launch_app(self._app_list[source])
             return
 
-        if source in self._source_list.keys():
+        if source in self._source_list:
             await self._async_upnp_select_source(source)
             return
 
@@ -667,18 +663,26 @@ class SamsungTVDevice(MediaPlayerEntity):
 
     async def _async_upnp_select_source(self, key: str) -> None:
         service = await self._async_get_main_tv_agent()
-        get_source_list = service.action('SetMainTVSource')
-        result = await get_source_list.async_call(Source=self._source_list[key]['type'], ID=self._source_list[key]['id'], UiID=0)
+        get_source_list = service.action("SetMainTVSource")
+        result = await get_source_list.async_call(
+            Source=self._source_list[key]["type"],
+            ID=self._source_list[key]["id"],
+            UiID=0,
+        )
         LOGGER.debug("SetMainTVSource Result: %s", result)
 
     async def async_set_brightness_level(self, brightness: float) -> None:
+        """Set the brightness level of the device asynchronously."""
         await self._dmr_device.async_set_brightness_level(brightness)
 
     async def async_set_contrast_level(self, contrast: float) -> None:
+        """Set the contrast level of the device asynchronously."""
         await self._dmr_device.async_set_contrast_level(contrast)
 
     async def async_set_sharpness_level(self, sharpness: float) -> None:
+        """Set the sharpness level of the device asynchronously."""
         await self._dmr_device.async_set_sharpness_level(sharpness)
 
     async def async_set_color_temperature_level(self, color_temperature: float) -> None:
+        """Set the color temperature level of the device asynchronously."""
         await self._dmr_device.async_set_color_temperature_level(color_temperature)
