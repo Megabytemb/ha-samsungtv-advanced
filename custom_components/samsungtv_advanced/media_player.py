@@ -117,7 +117,8 @@ async def async_setup_entry(
     data = hass.data[DOMAIN]
     if turn_on_action := data.get(host, {}).get(CONF_ON_ACTION):
         on_script = Script(
-            hass, turn_on_action, entry.data.get(CONF_NAME, DEFAULT_NAME), DOMAIN
+            hass, turn_on_action, entry.data.get(
+                CONF_NAME, DEFAULT_NAME), DOMAIN
         )
 
     async_add_entities([SamsungTVDevice(bridge, entry, on_script)], True)
@@ -269,7 +270,8 @@ class SamsungTVDevice(MediaPlayerEntity):
                 STATE_ON if await self._bridge.async_is_on() else STATE_OFF
             )
         if self._attr_state != old_state:
-            LOGGER.debug("TV %s state updated to %s", self._host, self._attr_state)
+            LOGGER.debug("TV %s state updated to %s",
+                         self._host, self._attr_state)
 
         if self._attr_state != STATE_ON:
             if self._dmr_device and self._dmr_device.is_subscribed:
@@ -306,7 +308,8 @@ class SamsungTVDevice(MediaPlayerEntity):
                 self._ssdp_main_tv_agent_location
             )
         except (UpnpConnectionError, UpnpResponseError, UpnpXmlContentError) as err:
-            LOGGER.debug("Unable to create Upnp DMR device: %r", err, exc_info=True)
+            LOGGER.debug("Unable to create Upnp DMR device: %r",
+                         err, exc_info=True)
             return
         return upnp_device.service(UPNP_SVC_MAIN_TV_AGENT)
 
@@ -322,7 +325,8 @@ class SamsungTVDevice(MediaPlayerEntity):
         try:
             xml = DET.fromstring(current_channel)
         except ET.ParseError as err:
-            LOGGER.debug("Unable to parse XML: %s\nXML:\n%s", err, current_channel)
+            LOGGER.debug("Unable to parse XML: %s\nXML:\n%s",
+                         err, current_channel)
 
         channel_dict = {
             "ChType": xml.find("ChType").text,
@@ -334,33 +338,59 @@ class SamsungTVDevice(MediaPlayerEntity):
 
         return channel_dict
 
-    async def async_set_channel_info(self, clear=False):
+    def async_clear_channel_info(self):
+        """Clear Media Channel Info."""
+        self._attr_media_channel = None
+        self._attr_media_title = None
+        self._attr_media_duration = None
+        self._attr_media_position = None
+        self._attr_media_content_type = None
+        self._attr_media_position_updated_at = None
+
+    async def async_set_channel_info(self):
         """Update media attributes based on channel data or clear them."""
         current_channel = await self._async_get_channel_info()
         tv_guide_data = async_get_tv_guide_data(self.hass)
 
         channel_data = tv_guide_data.get(current_channel["MajorCh"])
-        now_data = channel_data.get("now", {}) if channel_data else {}
+        if channel_data is None:
+            return self.async_clear_channel_info()
 
-        if channel_data and not clear:
-            now = utcnow()
-            start_datetime = parse_datetime(now_data["date"])
-            media_duration = int(now_data["duration"]) * 60
-            media_position = (now - start_datetime).seconds
+        now = utcnow()
 
-            self._attr_media_channel = channel_data.get("name")
-            self._attr_media_title = now_data.get("title")
-            self._attr_media_duration = media_duration
-            self._attr_media_position = media_position
-            self._attr_media_content_type = MediaType.CHANNEL
-            self._attr_media_position_updated_at = now
-        else:
-            self._attr_media_channel = None
-            self._attr_media_title = None
-            self._attr_media_duration = None
-            self._attr_media_position = None
-            self._attr_media_content_type = None
-            self._attr_media_position_updated_at = None
+        current_show = None
+        media_duration = None
+        media_position = None
+        media_title = None
+        media_channel = channel_data.get("name")
+
+        airings: list = channel_data.get("airings", [])
+        # reverse the list so we start with the latest shows
+        airings.reverse()
+
+        for airing in airings:
+            start_datetime = parse_datetime(airing["date"])
+            if now > start_datetime:
+                current_show = airing
+                media_duration = int(airing["duration"]) * 60
+                media_position = (now - start_datetime).seconds
+                media_title = current_show.get("title")
+
+                # Failsafe if shows run over or something.
+                if media_position > media_duration:
+                    media_duration = media_position + 10
+
+                break
+
+        if current_show is None:
+            return self.async_clear_channel_info()
+
+        self._attr_media_channel = media_channel
+        self._attr_media_title = media_title
+        self._attr_media_duration = media_duration
+        self._attr_media_position = media_position
+        self._attr_media_content_type = MediaType.CHANNEL
+        self._attr_media_position_updated_at = now
 
     async def _async_startup_source_list(self) -> None:
         service = await self._async_get_main_tv_agent()
@@ -394,7 +424,8 @@ class SamsungTVDevice(MediaPlayerEntity):
             s_name = source.find("DeviceName").text
             if s_name == "NONE":
                 s_name = None
-            s_connected = True if source.find("Connected").text == "Yes" else False
+            s_connected = True if source.find(
+                "Connected").text == "Yes" else False
             key = s_type
 
             self._source_list[key] = {
@@ -409,7 +440,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         if current_source["type"] == "TV":
             await self.async_set_channel_info()
         else:
-            await self.async_set_channel_info(clear=True)
+            await self.async_clear_channel_info()
             self._attr_source = current_source["type"]
 
         LOGGER.debug("Sources: %s", self._attr_source_list)
@@ -449,7 +480,8 @@ class SamsungTVDevice(MediaPlayerEntity):
         except asyncio.TimeoutError as err:
             # No need to try again
             self._app_list_event.set()
-            LOGGER.debug("Failed to load app list from %s: %r", self._host, err)
+            LOGGER.debug("Failed to load app list from %s: %r",
+                         self._host, err)
 
     async def _async_startup_dmr(self) -> None:
         assert self._ssdp_rendering_control_location is not None
@@ -466,7 +498,8 @@ class SamsungTVDevice(MediaPlayerEntity):
                     self._ssdp_rendering_control_location
                 )
             except (UpnpConnectionError, UpnpResponseError, UpnpXmlContentError) as err:
-                LOGGER.debug("Unable to create Upnp DMR device: %r", err, exc_info=True)
+                LOGGER.debug("Unable to create Upnp DMR device: %r",
+                             err, exc_info=True)
                 return
             _, event_ip = await async_get_local_ip(
                 self._ssdp_rendering_control_location, self.hass.loop
@@ -479,7 +512,8 @@ class SamsungTVDevice(MediaPlayerEntity):
                 loop=self.hass.loop,
             )
             await self._upnp_server.async_start_server()
-            self._dmr_device = DmrDevice(upnp_device, self._upnp_server.event_handler)
+            self._dmr_device = DmrDevice(
+                upnp_device, self._upnp_server.event_handler)
 
             try:
                 self._dmr_device.on_event = self._on_upnp_event
@@ -494,7 +528,8 @@ class SamsungTVDevice(MediaPlayerEntity):
                 self._dmr_device = None
                 await self._upnp_server.async_stop_server()
                 self._upnp_server = None
-                LOGGER.debug("Error while subscribing during device connect: %r", err)
+                LOGGER.debug(
+                    "Error while subscribing during device connect: %r", err)
                 raise
 
     async def _async_resubscribe_dmr(self) -> None:
@@ -502,7 +537,8 @@ class SamsungTVDevice(MediaPlayerEntity):
         try:
             await self._dmr_device.async_subscribe_services(auto_resubscribe=True)
         except UpnpCommunicationError as err:
-            LOGGER.debug("Device rejected re-subscription: %r", err, exc_info=True)
+            LOGGER.debug("Device rejected re-subscription: %r",
+                         err, exc_info=True)
 
     async def _async_shutdown_dmr(self) -> None:
         """Handle removal."""
@@ -571,7 +607,8 @@ class SamsungTVDevice(MediaPlayerEntity):
         try:
             await dmr_device.async_set_volume_level(volume)
         except UpnpActionResponseError as err:
-            LOGGER.warning("Unable to set volume level on %s: %r", self._host, err)
+            LOGGER.warning(
+                "Unable to set volume level on %s: %r", self._host, err)
 
     async def async_volume_up(self) -> None:
         """Volume up the media player."""
