@@ -441,7 +441,7 @@ class SamsungTVDevice(MediaPlayerEntity):
         if current_source["type"] == "TV":
             await self.async_set_channel_info()
         else:
-            await self.async_clear_channel_info()
+            self.async_clear_channel_info()
             self._attr_source = current_source["type"]
 
         LOGGER.debug("Sources: %s", self._attr_source_list)
